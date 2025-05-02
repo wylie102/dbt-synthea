@@ -14,5 +14,6 @@ csv_file_paths: list[Path] = [
 
 # Create a dictionary of filename: path_string and print in JSON format.
 csv_file_dict: dict[str, str] = {path.stem: str(path) for path in csv_file_paths}
-print(json.dumps(csv_file_dict))
 
+# Print dictionary as JSON.
+print(json.dumps(csv_file_dict))

@@ -11,8 +11,7 @@ db_file: Path = Path("./data/synthea_omop_etl.duckdb").resolve()
 source_schema: str = "dbt_synthea_dev_full"
 target_schema: str = "vocab_shard"
 
-conn: duckdb.DuckDBPyConnection = duckdb.connect(db_file)
-
+# Initialize table lists.
 vocab_tables: list[str] = [
     "concept",
     "concept_ancestor",
@@ -46,10 +45,13 @@ non_vocab_tables: list[str] = [
     "visit_occurrence",
 ]
 
+# Create db connection and temporary cids table.
+conn: duckdb.DuckDBPyConnection = duckdb.connect(db_file)
 _ = conn.sql("CREATE TEMPORARY TABLE cids(concept_id INTEGER);")
-duck_concept_ids = conn.table("cids")
 
-# TODO: add unit concepts found in drug_strength table
+# TODO: add unit concepts found in drug_strength table.
+
+# Read non-vocab tables and collate concept ids into cids table.
 for table in non_vocab_tables:
     print(f"Searching table {table}")
     sql_non_vocab = f'SELECT "name" FROM pragma_table_info({source_schema}.{table}) WHERE "name" LIKE \'%_concept_id\';'
@@ -58,7 +60,7 @@ for table in non_vocab_tables:
     )
     non_vocab_fields: list[str] = [field for (field,) in field_tuples]
     for field in non_vocab_fields:
-        print(f"- Searching field {field}")
+        print(f"Searching field {field}")
         concept_ids = conn.sql(f"SELECT DISTINCT {field} FROM {source_schema}.{table};")
         concept_ids.insert_into("cids")
 
@@ -89,6 +91,7 @@ for table in vocab_tables:
     )
     _ = conn.sql(sql_vocab)
 
+# Create non-filtered vocab tables.
 for table in vocab_tables_preserve:
     print(f"Migrating table {table}")
     _ = conn.sql(f"DROP TABLE IF EXISTS {target_schema}.{table};")
