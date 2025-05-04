@@ -1,17 +1,39 @@
-# A script to generate dbt YAML files from the OMOP CDM documentation
-#
-# Requires `BeautifulSoup4` and `ruamel.yaml` to be installed
-# Get the OMOP CDM documentation with e.g.:
-#   `wget https://raw.githubusercontent.com/OHDSI/CommonDataModel/refs/heads/main/docs/cdm54.html`
+#!/usr/bin/env  -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [ "beautifulsoup4", "ruamel-yaml", "requests" ]
+# ///
+
+"""
+A script to generate dbt YAML files from the OMOP CDM documentation
+Requires `BeautifulSoup4`, `ruamel.yaml`, and `requests` to be installed.
+If you have uv installed this will be done automatically.
+
+If you make this file executable you should also be able to run it directly using
+just the file path/name and the output directory path. e.g:
+./generate_dbt_yaml.py <output_dir>
+
+CDM version used is CDM 5.4 which corresponds to the url below.
+https://raw.githubusercontent.com/OHDSI/CommonDataModel/refs/heads/main/docs/cdm54.html
+
+If you wish to use a different version, either pass the url in as the --source argument
+or download the html file and pass the path in as --source.
+For example using wget <url>.
+"""
 
 import argparse
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import ParseResult, urlparse
 
+import requests
 from bs4 import BeautifulSoup
 from bs4._typing import _AtMostOneElement  # pyright: ignore[reportPrivateUsage]
 from bs4.element import NavigableString, Tag
 from ruamel.yaml import YAML
+
+default_source_url = "https://raw.githubusercontent.com/OHDSI/CommonDataModel/refs/heads/main/docs/cdm54.html"
 
 
 @dataclass
@@ -31,16 +53,34 @@ class OmopDocumentationContainer:
 class CliArgs:
     """A dataclass to ensure correct typing of command line arguments"""
 
-    cdm_html: Path = Path()
+    source: str = default_source_url
     output_dir: Path = Path()
 
 
-def parse_cli_arguments() -> CliArgs:
+def is_url(value: str) -> bool:
+    """Check if a string is a url."""
+    parsed: ParseResult = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def download_url_to_temp_file(url: str, output_dir: Path) -> Path:
+    """Download a URL to a .tmp file in the output directory and return the local Path."""
+    response = requests.get(url)
+    response.raise_for_status()  # raises if e.g. 404 or timeout
+
+    with tempfile.NamedTemporaryFile(
+        delete=False, dir=output_dir, suffix=".tmp"
+    ) as tmp_file:
+        _ = tmp_file.write(response.content)
+        return Path(tmp_file.name)
+
+
+def parse_cli_arguments() -> tuple[Path, Path]:
     """
     Parse command line arguments.
 
     Returns:
-         CLIArgs DataClass containing cdm_html: Path() and output_dir: Path().
+         CLIArgs DataClass containing cdm_html: str and output_dir: Path().
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         description="""
@@ -51,7 +91,9 @@ def parse_cli_arguments() -> CliArgs:
 
     # Common data model url.
     _ = parser.add_argument(
-        "cdm_html", type=Path, help="Path to the OMOP CDM documentation HTML"
+        "--source",
+        type=str,
+        help='Path or url to source html. If none provided defaults to:\n"{default_source}"',
     )
 
     # Output Directory.
@@ -62,12 +104,20 @@ def parse_cli_arguments() -> CliArgs:
     # Store paths in CLIArgs data class.
     args: CliArgs = parser.parse_args(namespace=CliArgs())
 
-    if not args.cdm_html.exists():
-        parser.exit(1, f"File {args.cdm_html} does not exist")
     if not args.output_dir.exists():
         parser.exit(1, f"Directory {args.output_dir} does not exist")
 
-    return args
+    if is_url(args.source):
+        try:
+            source_path = download_url_to_temp_file(args.source, args.output_dir)
+        except Exception as e:
+            parser.exit(1, f"Failed to download from {args.source}: {e}")
+    else:
+        source_path = Path(args.source)
+        if not source_path.exists():
+            parser.exit(1, f"Source file does not exist: {source_path}")
+
+    return source_path, args.output_dir
 
 
 def table_handler(table: Tag) -> list[OmopDocumentationContainer]:
@@ -266,13 +316,13 @@ def extract_omop_table_names(soup_obj: BeautifulSoup) -> list[str]:
 
 
 def main(
-    cdm_docs_path: Path,
+    source_path: Path,
     output_dir: Path,
 ) -> None:
     """
     Main loop to generate dbt YAML files from the OMOP CDM documentation
     """
-    with open(cdm_docs_path) as file_handle:
+    with open(source_path) as file_handle:
         file: str = file_handle.read()
 
     soup: BeautifulSoup = BeautifulSoup(file, features="html.parser")
@@ -308,10 +358,13 @@ def main(
         yaml.dump(table_dict, open(f"{output_dir}/{table}.yml", "w"))  # pyright: ignore[reportUnknownMemberType]
         yaml.allow_duplicate_keys
 
+        if source_path.suffix == ".tmp" and source_path.exists():
+            source_path.unlink()
+
     print(f" Exported to `{output_dir}`")
     print("  Done!")
 
 
 if __name__ == "__main__":
-    args: CliArgs = parse_cli_arguments()
-    main(args.cdm_html, args.output_dir)
+    source, output_dir = parse_cli_arguments()
+    main(source, output_dir)
