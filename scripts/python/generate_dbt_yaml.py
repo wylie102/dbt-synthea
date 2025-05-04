@@ -9,13 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bs4 import BeautifulSoup
-from bs4._typing import _AtMostOneElement
-from bs4.element import Tag
+from bs4._typing import _AtMostOneElement  # pyright: ignore[reportPrivateUsage]
+from bs4.element import NavigableString, Tag
 from ruamel.yaml import YAML
 
 
 @dataclass
-class omop_documentation_container:
+class OmopDocumentationContainer:
     cdm_field: str
     user_guide: str
     etl_conventions: str
@@ -124,58 +124,89 @@ def sentinel_to_bool(text: str) -> bool:
         return False
 
 
+def create_table_dict(
+    table: str,
+    table_description: str,
+    parsed_table: list[OmopDocumentationContainer],
+) -> dict[
+    str,
+    list[dict[str, str | list[dict[str, str | list[str | dict[str, dict[str, str]]]]]]],
+]:
+    table_dict: dict[
+        str,
+        list[
+            dict[
+                str, str | list[dict[str, str | list[str | dict[str, dict[str, str]]]]]
+            ]
+        ],
+    ] = {
+        "models": [
+            {
+                "name": table,
+                "description": table_description,
+                "columns": [
+                    omop_docs_to_dbt_config(doc_container)
+                    for doc_container in parsed_table
+                ],
+            }
+        ]
+    }
+    return table_dict
+
+
 def extract_table_description(table_handle: Tag) -> str:
     sibling_element: _AtMostOneElement = _ensure_tag(
         table_handle.find("p", string="Table Description")
     ).next_sibling
-    description_element: _AtMostOneElement = _ensure_tag(sibling_element).next_sibling
+    description_element: _AtMostOneElement = _ensure_navigable_string(
+        sibling_element
+    ).next_sibling
     description: str = _ensure_tag(description_element).get_text()
 
     return description.replace("\n", " ")
 
 
-def omop_docs_to_dbt_config(obj: omop_documentation_container) -> dict[str, str]:
-
-
-def omop_docs_to_dbt_config(obj: OmopDocumentationContainer) -> dict[str, str]:
+def omop_docs_to_dbt_config(
+    doc_container: OmopDocumentationContainer,
+) -> dict[str, str | list[str | dict[str, dict[str, str]]]]:
     """
     With an OMOP documentation object, we can use some simple string parsing/heuristic
     to create dbt test configs.
     """
-    column_config = {
-        "name": obj.cdm_field,
-        "description": obj.user_guide,
-        "data_type": obj.datatype,
+    column_config: dict[str, str | list[str | dict[str, dict[str, str]]]] = {
+        "name": doc_container.cdm_field,
+        "description": doc_container.user_guide,
+        "data_type": doc_container.datatype,
     }
 
-    # == Create Tests ==
-    tests: list = []
+    # Create Tests
+    tests: list[str | dict[str, dict[str, str]]] = []
 
-    if obj.required:
+    if doc_container.required:
         tests.append("not_null")
 
-    if obj.primary_key:
+    if doc_container.primary_key:
         tests.append("unique")
 
-    if obj.foreign_key:
-        if obj.foreign_key_domain == "":
+    if doc_container.foreign_key:
+        if doc_container.foreign_key_domain == "":
             # Handle simpler cases first, where a domain is not constrained
-            test = {
+            test: dict[str, dict[str, str]] = {
                 "relationships": {
-                    "to": f"ref('{obj.foreign_key_table.lower()}')",
-                    "field": f"{obj.foreign_key_table.lower()}_id",
+                    "to": f"ref('{doc_container.foreign_key_table.lower()}')",
+                    "field": f"{doc_container.foreign_key_table.lower()}_id",
                 }
             }
             tests.append(test)
 
         else:
             # Add constrained domain tests
-            specific_test = {
+            specific_test: dict[str, dict[str, str]] = {
                 "dbt_utils.relationships_where": {
-                    "to": f"ref('{obj.foreign_key_table.lower()}')",
-                    "field": f"{obj.foreign_key_table.lower()}_id",
-                    "from_condition": f"{obj.cdm_field} <> 0",
-                    "to_condition": f"domain_id = '{obj.foreign_key_domain}'",
+                    "to": f"ref('{doc_container.foreign_key_table.lower()}')",
+                    "field": f"{doc_container.foreign_key_table.lower()}_id",
+                    "from_condition": f"{doc_container.cdm_field} <> 0",
+                    "to_condition": f"domain_id = '{doc_container.foreign_key_domain}'",
                 }
             }
             tests.append(specific_test)
@@ -184,6 +215,30 @@ def omop_docs_to_dbt_config(obj: OmopDocumentationContainer) -> dict[str, str]:
         column_config["tests"] = tests
 
     return column_config
+
+
+def _ensure_tag(element: _AtMostOneElement) -> Tag:
+    """
+    Ensures that the given element is a BeautifulSoup Tag.
+    If the element is not a Tag, raises a ValueError.
+    """
+    if isinstance(element, Tag):
+        return element
+    raise ValueError(
+        f"No Tag returned from BeautifulSoup query.\nReturn type is {type(element)}"
+    )
+
+
+def _ensure_navigable_string(element: _AtMostOneElement) -> NavigableString:
+    """
+    Ensures that the given element is a BeautifulSoup NavigableString.
+    If the element is not a NavigableString, raises a ValueError.
+    """
+    if isinstance(element, NavigableString):
+        return element
+    raise ValueError(
+        f"No NavigableString returned from BeautifulSoup query.\nReturn type is {type(element)}"
+    )
 
 
 def extract_omop_table_names(soup_obj: BeautifulSoup) -> list[str]:
@@ -199,8 +254,8 @@ def extract_omop_table_names(soup_obj: BeautifulSoup) -> list[str]:
 
     table_names: list[str] = []
     for div in headers:
-        table_name_element: Tag = _ensure_tag(div.find("h3"))
-        table_names.append((table_name_element.get_text()))
+        if div.h3:
+            table_names.append(div.h3.get_text())
 
     # Exclude unwanted tables
     unwanted_tables: set[str] = {"cohort", "cohort_definition"}
@@ -208,35 +263,6 @@ def extract_omop_table_names(soup_obj: BeautifulSoup) -> list[str]:
         table for table in table_names if table not in unwanted_tables
     ]
     return filtered_table_names
-
-
-def _ensure_tag(element: _AtMostOneElement) -> Tag:
-    """
-    Ensures that the given element is a BeautifulSoup Tag.
-    If the element is not a Tag, raises a ValueError.
-    """
-    if isinstance(element, Tag):
-        return element
-    raise ValueError("No Tag returned from BeautifulSoup query")
-
-
-def create_table_dict(
-    table: str,
-    table_description: str,
-    parsed_table: list[OmopDocumentationContainer],
-):
-    pass
-
-    # table_dict structure - dict[str, list[dict[str, str | list[dict[str, str]]]]]
-    #  {
-    #     "models": [
-    #         {
-    #             "name": table,
-    #             "description": table_description,
-    #             "columns": [omop_docs_to_dbt_config(doc_container) for doc_container in parsed_table],
-    #         }
-    #     ]
-    # }
 
 
 def main(
@@ -258,23 +284,23 @@ def main(
         # For each table generate the desired dbt yaml
         # Get desired div with table
         div_handle: Tag = _ensure_tag(soup.find("div", attrs={"id": table}))
+
         table_handle: Tag = _ensure_tag(div_handle.find("table"))
         tbody_handle: Tag = _ensure_tag(table_handle.find("tbody"))
-
         parsed_table: list[OmopDocumentationContainer] = table_handler(tbody_handle)
-        table_description: str = extract_table_description(table_handle)
 
-        table_dict = create_table_dict(table, table_description, parsed_table)
+        table_description: str = extract_table_description(div_handle)
 
-        table_dict = {
-            "models": [
-                {
-                    "name": table,
-                    "description": table_description,
-                    "columns": [omop_docs_to_dbt_config(obj) for obj in parsed_table],
-                }
-            ]
-        }
+        # TODO: Look at turning this structure into a dataclass or pydantic BaseModel class.
+        table_dict: dict[
+            str,
+            list[
+                dict[
+                    str,
+                    str | list[dict[str, str | list[str | dict[str, dict[str, str]]]]],
+                ]
+            ],
+        ] = create_table_dict(table, table_description, parsed_table)
 
         yaml: YAML = YAML()
         yaml.indent(mapping=2, sequence=4, offset=2)  # pyright: ignore[reportUnknownMemberType]
