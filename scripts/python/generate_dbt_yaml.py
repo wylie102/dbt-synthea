@@ -28,14 +28,14 @@ class omop_documentation_container:
 
 
 @dataclass
-class CLIArgs:
+class CliArgs:
     """A dataclass to ensure correct typing of command line arguments"""
 
     cdm_html: Path = Path()
     output_dir: Path = Path()
 
 
-def parse_cli_arguments() -> CLIArgs:
+def parse_cli_arguments() -> CliArgs:
     """
     Parse command line arguments.
 
@@ -60,7 +60,7 @@ def parse_cli_arguments() -> CLIArgs:
     )
 
     # Store paths in CLIArgs data class.
-    args: CLIArgs = parser.parse_args(namespace=CLIArgs())
+    args: CliArgs = parser.parse_args(namespace=CliArgs())
 
     if not args.cdm_html.exists():
         parser.exit(1, f"File {args.cdm_html} does not exist")
@@ -70,7 +70,7 @@ def parse_cli_arguments() -> CLIArgs:
     return args
 
 
-def table_handler(table: Tag) -> list[omop_documentation_container]:
+def table_handler(table: Tag) -> list[OmopDocumentationContainer]:
     """
     Takes a table and returns a list of objects that represent the tables in the table.
     """
@@ -79,7 +79,7 @@ def table_handler(table: Tag) -> list[omop_documentation_container]:
     return [row_handler(row) for row in rows]
 
 
-def row_handler(row: Tag) -> omop_documentation_container:
+def row_handler(row: Tag) -> OmopDocumentationContainer:
     """
     Take each row from a table and handle it, resulting in a object that can neatly
     store how the CDM docs express each column.
@@ -99,48 +99,45 @@ def row_handler(row: Tag) -> omop_documentation_container:
     }
 
     # Remove dangling whitespace and newlines from parsed HTML
-    cells: dict[str, str | bool] = {
+    cells_stripped: dict[str, str] = {
         k: v.replace("\n", "").strip() for k, v in cells_raw.items()
     }
 
-    # Handle booleans expressed as text
-    cells.update(
-        {
-            "primary_key": sentinel_to_bool(cells["primary_key"]),
-            "required": sentinel_to_bool(cells["required"]),
-            "foreign_key": sentinel_to_bool(cells["foreign_key"]),
-        }
-    )
-
-    return omop_documentation_container(
-        cdm_field=str(cells["cdm_field"]),
-        user_guide=str(cells["user_guide"]),
-        etl_conventions=str(cells["etl_conventions"]),
-        datatype=str(cells["datatype"]),
-        required=bool(cells["required"]),
-        primary_key=bool(cells["primary_key"]),
-        foreign_key=bool(cells["foreign_key"]),
-        foreign_key_table=str(cells["foreign_key_table"]),
-        foreign_key_domain=str(cells["foreign_key_domain"]),
+    # Convert sentinels to booleans. Assign values to omop_documentation_container DataClass.
+    return OmopDocumentationContainer(
+        cdm_field=cells_stripped["cdm_field"],
+        user_guide=cells_stripped["user_guide"],
+        etl_conventions=cells_stripped["etl_conventions"],
+        datatype=cells_stripped["datatype"],
+        required=sentinel_to_bool(cells_stripped["required"]),
+        primary_key=sentinel_to_bool(cells_stripped["primary_key"]),
+        foreign_key=sentinel_to_bool(cells_stripped["foreign_key"]),
+        foreign_key_table=cells_stripped["foreign_key_table"],
+        foreign_key_domain=cells_stripped["foreign_key_domain"],
     )
 
 
-def sentinel_to_bool(text) -> bool:
+def sentinel_to_bool(text: str) -> bool:
     if text == "Yes":
         return True
     else:
         return False
 
 
-def extract_table_description(table_handle) -> str:
-    description = table_handle.find(
-        "p", string="Table Description"
-    ).next_sibling.next_sibling.text
+def extract_table_description(table_handle: Tag) -> str:
+    sibling_element: _AtMostOneElement = _ensure_tag(
+        table_handle.find("p", string="Table Description")
+    ).next_sibling
+    description_element: _AtMostOneElement = _ensure_tag(sibling_element).next_sibling
+    description: str = _ensure_tag(description_element).get_text()
 
     return description.replace("\n", " ")
 
 
 def omop_docs_to_dbt_config(obj: omop_documentation_container) -> dict[str, str]:
+
+
+def omop_docs_to_dbt_config(obj: OmopDocumentationContainer) -> dict[str, str]:
     """
     With an OMOP documentation object, we can use some simple string parsing/heuristic
     to create dbt test configs.
@@ -220,7 +217,26 @@ def _ensure_tag(element: _AtMostOneElement) -> Tag:
     """
     if isinstance(element, Tag):
         return element
-    raise ValueError("No Tag returned from BS4 action")
+    raise ValueError("No Tag returned from BeautifulSoup query")
+
+
+def create_table_dict(
+    table: str,
+    table_description: str,
+    parsed_table: list[OmopDocumentationContainer],
+):
+    pass
+
+    # table_dict structure - dict[str, list[dict[str, str | list[dict[str, str]]]]]
+    #  {
+    #     "models": [
+    #         {
+    #             "name": table,
+    #             "description": table_description,
+    #             "columns": [omop_docs_to_dbt_config(doc_container) for doc_container in parsed_table],
+    #         }
+    #     ]
+    # }
 
 
 def main(
@@ -245,8 +261,10 @@ def main(
         table_handle: Tag = _ensure_tag(div_handle.find("table"))
         tbody_handle: Tag = _ensure_tag(table_handle.find("tbody"))
 
-        parsed_table: list[omop_documentation_container] = table_handler(tbody_handle)
-        table_description = extract_table_description(table_handle)
+        parsed_table: list[OmopDocumentationContainer] = table_handler(tbody_handle)
+        table_description: str = extract_table_description(table_handle)
+
+        table_dict = create_table_dict(table, table_description, parsed_table)
 
         table_dict = {
             "models": [
@@ -269,5 +287,5 @@ def main(
 
 
 if __name__ == "__main__":
-    args: CLIArgs = parse_cli_arguments()
+    args: CliArgs = parse_cli_arguments()
     main(args.cdm_html, args.output_dir)
