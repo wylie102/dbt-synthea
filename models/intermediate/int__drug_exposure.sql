@@ -6,6 +6,7 @@ WITH all_drugs AS (
 
 SELECT
     row_number() OVER (ORDER BY person_id, drug_concept_id, drug_exposure_start_datetime) AS drug_exposure_id
+    , rowid as drug_exposure_id_2
     , drug_base_cost
     , drug_paid_by_payer
     , person_id

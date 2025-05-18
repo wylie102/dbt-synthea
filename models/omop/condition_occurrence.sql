@@ -1,5 +1,6 @@
 SELECT
     row_number() OVER (ORDER BY p.person_id) AS condition_occurrence_id
+    , rowid AS condition_occurrence_id_2
     , p.person_id
     , srctostdvm.target_concept_id AS condition_concept_id
     , c.condition_start_date

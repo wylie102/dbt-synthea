@@ -14,6 +14,7 @@ WITH cte_patients_lower AS (
 
     SELECT
         id AS patient_id
+        , rowid AS patient_id_2
         , birthdate AS birth_date
         , deathdate AS death_date
         , ssn

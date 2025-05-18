@@ -14,6 +14,7 @@ WITH cte_providers_lower AS (
 
     SELECT
         id AS provider_id
+        , rowid as provider_id_2
         , organization AS organization_id
         , "name" AS provider_name
         , gender AS provider_gender

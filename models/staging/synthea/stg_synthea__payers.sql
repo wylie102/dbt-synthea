@@ -14,6 +14,7 @@ WITH cte_payers_lower AS (
 
     SELECT
         id AS payer_id
+        , rowid as payer_id_2
         , "name" AS payer_name
         , city AS payer_city
         , state_headquartered AS payer_state_headquartered

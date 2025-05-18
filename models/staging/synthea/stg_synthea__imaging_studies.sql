@@ -14,6 +14,7 @@ WITH cte_imaging_studies_lower AS (
 
     SELECT
         id AS imaging_id
+        , rowid as imaging_id_2
         , "date" AS imaging_datetime
         , patient AS patient_id
         , encounter AS encounter_id

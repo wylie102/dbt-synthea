@@ -1,5 +1,6 @@
 SELECT
     row_number() OVER (ORDER BY e.encounter_id) AS visit_detail_id
+    , rowid AS visit_detail_id_2
     , e.encounter_id
     , e.person_id
     , CASE

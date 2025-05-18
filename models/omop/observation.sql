@@ -8,6 +8,7 @@ WITH all_observations AS (
 
 SELECT
     row_number() OVER (ORDER BY person_id) AS observation_id
+    , rowid AS observation_id_2
     , person_id
     , observation_concept_id
     , observation_date

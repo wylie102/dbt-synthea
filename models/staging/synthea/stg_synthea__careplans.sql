@@ -14,6 +14,7 @@ WITH cte_careplans_lower AS (
 
     SELECT
         id AS careplan_id
+        , rowid AS careplan_id_2
         , "start" AS careplan_start_date
         , "stop" AS careplan_stop_date
         , patient AS patient_id

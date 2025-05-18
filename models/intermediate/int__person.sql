@@ -8,6 +8,7 @@
 
 SELECT
     row_number() OVER (ORDER BY p.patient_id) AS person_id
+    , p.patient_id_2 AS person_id_2
     , CASE
         WHEN upper(p.patient_gender) = 'M' THEN 8507
         WHEN upper(p.patient_gender) = 'F' THEN 8532

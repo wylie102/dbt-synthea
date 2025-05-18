@@ -7,6 +7,7 @@
 
 SELECT
     ROW_NUMBER() OVER (ORDER BY org.organization_id) AS care_site_id
+    , rowid AS care_site_id_2
     , org.organization_name AS care_site_name
     , 0 AS place_of_service_concept_id
     , loc.location_id

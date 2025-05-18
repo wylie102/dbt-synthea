@@ -1,5 +1,6 @@
 SELECT
     row_number() OVER (ORDER BY person_id) AS observation_period_id
+    , rowid AS observation_period_id_2
     , person_id
     , observation_period_start_date
     , observation_period_end_date

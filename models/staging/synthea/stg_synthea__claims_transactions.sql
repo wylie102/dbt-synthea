@@ -14,6 +14,7 @@ WITH cte_claims_transactions_lower AS (
 
     SELECT
         id AS claim_transaction_id
+        , rowid as claim_transaction_id_2
         , claimid AS claim_id
         , chargeid AS charge_id
         , patientid AS patient_id

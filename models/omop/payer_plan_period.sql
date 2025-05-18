@@ -2,6 +2,7 @@ SELECT
     row_number()
         OVER (ORDER BY pat.patient_id, pt.coverage_start_datetime)
     AS payer_plan_period_id
+    , rowid AS payer_plan_period_id_2
     , per.person_id
     , pt.coverage_start_date AS payer_plan_period_start_date
     , pt.coverage_end_date AS payer_plan_period_end_date

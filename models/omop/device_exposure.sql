@@ -1,5 +1,6 @@
 SELECT
     row_number() OVER (ORDER BY p.person_id) AS device_exposure_id
+    , rowid AS device_exposure_id_2
     , p.person_id
     , srctostdvm.target_concept_id AS device_concept_id
     , d.device_start_date AS device_exposure_start_date
