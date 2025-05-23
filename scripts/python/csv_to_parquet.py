@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["duckdb<=1.2.2"]
+# dependencies = ["duckdb==1.3"]
 # ///
 
 """
@@ -34,13 +34,19 @@ class CliArgs:
 
 
 @dataclass
+class CastDict:
+    """Dataclass to store info for a cast to a type."""
+
+    table_cast_set: set[str]
+    column_cast_set: set[str]
+    new_type: str
+
+
+@dataclass
 class BaseInfo:
     """Base class for Info dataclasses."""
 
     output_dir_name: str
-    table_cast_list: list[str]
-    column_cast_list: list[str]
-    new_type: str
     date_format: str
 
 
@@ -49,18 +55,18 @@ class VocabInfo(BaseInfo):
     """Dataclass to store info for Vocab -> parquet conversion."""
 
     output_dir_name: str = "vocab_parquet"
-    table_cast_list: list[str] = field(
-        default_factory=lambda: [
-            "concept",
-            "concept_relationship",
-            "drug_strength",
-        ]
-    )
-    column_cast_list: list[str] = field(
-        default_factory=lambda: ["valid_start_date", "valid_end_date"]
-    )
-    new_type: str = "DATE"
     date_format: str = "%Y%m%d"
+    date_cast: CastDict = field(
+        default_factory=lambda: CastDict(
+            table_cast_set={
+                "concept",
+                "concept_relationship",
+                "drug_strength",
+            },
+            column_cast_set={"valid_start_date", "valid_end_date"},
+            new_type="DATE",
+        )
+    )
 
 
 @dataclass
@@ -68,18 +74,43 @@ class SyntheaInfo(BaseInfo):
     """Dataclass to store info for Synthea -> parquet conversion."""
 
     output_dir_name: str = "synthea_parquet"
-    table_cast_list: list[str] = field(
-        default_factory=lambda: [
-            "medications",
-            "allergies",
-            "conditions",
-            "devices",
-            "procedures",
-        ]
-    )
-    column_cast_list: list[str] = field(default_factory=lambda: ["CODE"])
-    new_type: str = "VARCHAR"
     date_format: str = "%Y-%m-%d"
+    varchar_cast: CastDict = field(
+        default_factory=lambda: CastDict(
+            table_cast_set={
+                "medications",
+                "allergies",
+                "conditions",
+                "devices",
+                "procedures",
+            },
+            column_cast_set={"code"},
+            new_type="VARCHAR",
+        )
+    )
+    uuid_cast: CastDict = field(
+        default_factory=lambda: CastDict(
+            table_cast_set=set(),
+            column_cast_set={
+                "patient",
+                "encounter",
+                "id",
+                "patientid",
+                "providerid",
+                "appointmentid",
+                "secondary_payer",
+                "memberid",
+                "supervisingproviderid",
+                "claimid",
+                "placeofservice",
+                "patientinsuranceid",
+                "organization",
+                "provider",
+                "payer",
+            },
+            new_type="UUID",
+        )
+    )
 
 
 def parse_cli_arguments() -> CliArgs:
@@ -132,7 +163,7 @@ def parse_cli_arguments() -> CliArgs:
 
 
 def get_column_type_dict(conn: DuckDBPyConnection, file_path: Path) -> dict[str, str]:
-    """Create a dictionary of columns and their types for the given CSV file."""
+    """Create a TableColumnDict for a given table."""
     csv_file: DuckDBPyRelation = conn.read_csv(str(file_path))
     columns: list[str] = csv_file.columns
     types: list[str] = [str(type) for type in csv_file.types]
@@ -140,10 +171,47 @@ def get_column_type_dict(conn: DuckDBPyConnection, file_path: Path) -> dict[str,
     return column_type_dict
 
 
-def alter_type_dict(column_dict: dict[str, str], alter_list: list[str], new_type: str):
+def create_table_dict(
+    conn: DuckDBPyConnection, cast_set: set[str], file_dict: dict[str, Path]
+):
+    table_dict: dict[str, dict[str, str]] = {}
+    for table in cast_set:
+        path: Path = file_dict[table]
+        column_type_dict = get_column_type_dict(conn, path)
+        table_dict[table] = column_type_dict
+
+    return table_dict
+
+
+def get_alter_list(column_names: list[str], cast_set: set[str]):
+    print(f"DEBUGPRINT: csv_to_parquet.py:186: cast_set={cast_set}")
+    alter_list = [column for column in column_names if column.lower() in cast_set]
+    print(f"DEBUGPRINT: csv_to_parquet.py:187: alter_list={alter_list}")
+    return alter_list
+
+
+def alter_column_dict(
+    column_dict: dict[str, str], alter_list: list[str], new_type: str
+):
     """Alter the data types of the specified columns in the column dict"""
     for column in alter_list:
+        print(f"DEBUGPRINT: csv_to_parquet.py:195: column={column}")
         column_dict[column] = new_type
+
+
+def alter_table_dict(
+    cast_dict: CastDict,
+    table_dict: dict[str, dict[str, str]],
+):
+    print(f"DEBUGPRINT: csv_to_parquet.py:200: cast_dict={cast_dict}")
+    print(f"DEBUGPRINT: csv_to_parquet.py:201: table_dict={table_dict}")
+    for table, dict in table_dict.items():
+        if table in cast_dict.table_cast_set:
+            print(f"DEBUGPRINT: csv_to_parquet.py:207: dict={dict}")
+            column_names = [column for column in dict.keys()]
+            print(f"DEBUGPRINT: csv_to_parquet.py:208: column_names={column_names}")
+            alter_list = get_alter_list(column_names, cast_dict.column_cast_set)
+            alter_column_dict(dict, alter_list, cast_dict.new_type)
 
 
 def create_relation(
@@ -164,21 +232,33 @@ def convert_to_parquet(
 ) -> None:
     """Main function for the vocab_to_parquet script"""
 
-    # Initialize input specific variables.
-    if vocab:
-        info: BaseInfo = VocabInfo()
-    else:
-        info = SyntheaInfo()
+    # Create duckdb connection.
+    conn: DuckDBPyConnection = duckdb.connect()
 
-    # Create dictionary of csv files.
+    # Create dictionary of csv files - {name: Path}.
     file_dict: dict[str, Path] = {
         file.stem.lower(): file
         for file in input_directory.iterdir()
         if file.suffix == ".csv"
     }
 
-    # Create duckdb connection.
-    conn: DuckDBPyConnection = duckdb.connect()
+    # Initialize input specific variables.
+    if vocab:
+        info: BaseInfo = VocabInfo()
+        cast_dict: CastDict = info.date_cast
+        table_dict: dict[str, dict[str, str]] = create_table_dict(
+            conn, cast_dict.table_cast_set, file_dict
+        )
+        alter_table_dict(cast_dict, table_dict)
+    else:
+        info = SyntheaInfo()
+        cast_dicts: list[CastDict] = [info.varchar_cast, info.uuid_cast]
+        for cast_dict in cast_dicts:
+            if not cast_dict.table_cast_set:
+                cast_dict.table_cast_set = set(file_dict.keys())
+        table_dict = create_table_dict(conn, info.uuid_cast.table_cast_set, file_dict)
+        for cast_dict in cast_dicts:
+            alter_table_dict(cast_dict, table_dict)
 
     # Create output_directory.
     if output_dir:
@@ -188,16 +268,12 @@ def convert_to_parquet(
     output_directory.mkdir(exist_ok=True, parents=True)
 
     # Process tables that need to be altered.
-    for table in info.table_cast_list:
+    for table, column_type_dict in table_dict.items():
         # Initialize file path and output path.
         file_path: Path = file_dict.pop(table)
         output_path: Path = (
             output_directory / file_path.with_suffix(".parquet").name.lower()
         )
-
-        # Create the file column dictionary and alter the specified columns.
-        column_type_dict: dict[str, str] = get_column_type_dict(conn, file_path)
-        alter_type_dict(column_type_dict, info.column_cast_list, info.new_type)
 
         # Create relation and convert to parquet.
         rel: DuckDBPyRelation = create_relation(

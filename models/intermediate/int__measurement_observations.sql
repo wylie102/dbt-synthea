@@ -3,7 +3,7 @@ SELECT
     , srctostdvm.target_concept_id AS measurement_concept_id
     , o.observation_date AS measurement_date
     , o.observation_datetime AS measurement_datetime
-    , {{ dbt.cast("o.observation_datetime", api.Column.translate_type("time")) }} AS measurement_time
+    , {{ dbt.cast("o.observation_datetime", api.Column.translate_type("timetz")) }} AS measurement_time
     , 32827 AS measurement_type_concept_id
     , 0 AS operator_concept_id
     , CASE

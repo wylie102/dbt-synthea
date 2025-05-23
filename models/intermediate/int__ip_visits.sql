@@ -92,7 +92,8 @@ all_ip_encounters AS (
 , cte_visit_starts AS (
     -- Then among encounters with the same end date, we choose the earliest possible start date
     SELECT
-        person_id
+        MIN(encounter_id) AS encounter_id
+        , person_id
         , min(encounter_start_date) AS visit_start_date
         , visit_end_date
     FROM cte_visit_ends
@@ -102,7 +103,7 @@ all_ip_encounters AS (
 , cte_visit_ids AS (
     -- Assign each collapsed visit a unique ID
     SELECT
-        row_number() OVER (ORDER BY person_id, visit_start_date) AS visit_id
+        encounter_id AS visit_id
         , person_id
         , visit_start_date
         , visit_end_date
